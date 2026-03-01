@@ -1,0 +1,16 @@
+2026-02-26 01:21:41 - INFO - Logger initialized. Log file: /scratch/leihong/tracin_ghost_tool_results/1064576/logs/run_20260226_012141.log
+2026-02-26 01:21:41 - INFO - Starting TracIn pipeline.
+/home/leihong/containers/py311_site/torch/utils/data/dataloader.py:1118: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
+  super().__init__(loader)
+2026-02-26 01:21:44 - INFO - Saved checkpoint /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/checkpoints/ckpt_0.pt with meta /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/checkpoints/meta_0.json (lr=0.010000)
+2026-02-26 01:21:44 - INFO - Saved checkpoint /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/checkpoints/ckpt_1.pt with meta /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/checkpoints/meta_1.json (lr=0.010000)
+2026-02-26 01:21:44 - INFO - Saved checkpoint /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/checkpoints/ckpt_2.pt with meta /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/checkpoints/meta_2.json (lr=0.010000)
+2026-02-26 01:21:45 - INFO - Training complete. Saved 3 checkpoints.
+2026-02-26 01:21:46 - INFO - Saved ghost embeddings: /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/embeddings/A.npz and /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/embeddings/E.npz
+2026-02-26 01:21:46 - INFO - Extraction complete with mode: ghost
+2026-02-26 01:21:46 - INFO - Built FAISS IndexFlatIP indices for 3 checkpoints (mode=ghost).
+2026-02-26 01:21:46 - INFO - Index build complete.
+2026-02-26 01:21:46 - INFO - Computed per-checkpoint influence score vectors.
+2026-02-26 01:21:46 - INFO - Per-checkpoint influence scoring complete.
+2026-02-26 01:21:46 - INFO - Saved Top-K results: /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/results/topk.csv
+2026-02-26 01:21:46 - INFO - Pipeline finished. Top-K result saved to /scratch/leihong/tracin_ghost_tool_results/1064576/outputs/results/topk.csv

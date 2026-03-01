@@ -1,0 +1,37 @@
+seed: 42
+
+paths:
+  data_root: ../data
+  outputs_dir: outputs
+  logs_dir: logs
+
+dataset:
+  name: mnist
+  adapter_class: data.mnist_data_adapter.MnistDataAdapter
+  train_subset: 5000
+  test_subset: 500
+  batch_size: 64
+  num_workers: 2
+
+task:
+  type: classification
+  adapter_class: adapters.task_classification_adapter.ClassificationTaskAdapter
+
+model:
+  name: mnist_mlp
+  adapter_class: adapters.mnist_mlp_adapter.MnistMLPAdapter
+  input_dim: 784
+  hidden_dim: 128
+  num_classes: 10
+
+train:
+  trainer_class: trainer.generic_trainer.GenericTrainer
+  epochs: 5
+  learning_rate: 0.01
+  momentum: 0.9
+  checkpoint_every_steps: 100
+
+influence:
+  extraction_mode: ghost  # strict mode: ghost only
+  top_k: 20
+  test_query_count: 50
