@@ -1,15 +1,8 @@
-# TracIn Ghost — Default Configuration
-#
-# This is a template. For model-specific configs see testModels/<name>/config.yaml.
-# The src/ library functions accept explicit parameters — this file is read
-# by model-specific run_index.py / run_query.py scripts.
-
 seed: 42
 device: auto
 
 paths:
   outputs_dir: outputs
-  logs_dir: logs
   data_root: data
 
 dataset:
@@ -27,7 +20,7 @@ checkpoints:
 
 ghost:
   projection_dim: 1280
-  projection_type: sjlt      # "sjlt" or "dense"
+  projection_type: sjlt
   projection_seed: 42
 
 index:

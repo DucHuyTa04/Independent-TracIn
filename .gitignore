@@ -6,9 +6,15 @@ __pycache__/
 .venv/
 venv/
 .env
+.pytest_cache/
 
 outputs/
 !outputs/.gitkeep
+!outputs/checkpoints/.gitkeep
 
 data/
+!data/.gitkeep
+
+logs/
+
 *.pt

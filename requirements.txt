@@ -1,4 +1,6 @@
 torch
 numpy
-pyyaml
+scipy
 faiss-cpu
+pyyaml
+pytest
