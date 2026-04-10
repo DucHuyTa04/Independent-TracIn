@@ -17,7 +17,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from benchmarks.benchmark_profiling import profile_block
-from benchmarks.checkpoint_schedule import evenly_spaced_checkpoint_epochs
+from benchmarks.train_utils import train_with_convergence
 from benchmarks.comparison import build_comparison
 from benchmarks.full_gradient_tracin import compute_full_gradient_tracin_scores
 from benchmarks.ghost_faiss import auto_ghost_layers, compute_ghost_tracin_scores
@@ -98,7 +98,6 @@ def main() -> None:
         torch.manual_seed(args.seed)
         return build_large_vit(num_classes=10)
 
-    save_at = set(evenly_spaced_checkpoint_epochs(args.epochs))
 
     m = model_factory().to(device)
     opt = torch.optim.Adam(m.parameters(), lr=args.lr)
@@ -108,19 +107,11 @@ def main() -> None:
     dl_full = DataLoader(
         base_ds, batch_size=16, shuffle=True, generator=g_full, num_workers=0,
     )
-    m.train()
-    for e in range(args.epochs):
-        for x, y, _ in dl_full:
-            x, y = x.to(device), y.to(device)
-            opt.zero_grad()
-            crit(m(x), y).backward()
-            opt.step()
-        if e in save_at:
-            torch.save(m.state_dict(), os.path.join(ckpt_dir, f"ckpt_{e}.pt"))
-            torch.save(opt.state_dict(), os.path.join(ckpt_dir, f"optim_{e}.pt"))
+    ckpt_epochs = train_with_convergence(
+        m, opt, lambda mdl, x, y: crit(mdl(x), y),
+        dl_full, device, ckpt_dir, max_epochs=args.epochs,
+    )
     del m
-
-    ckpt_epochs = sorted(save_at)
     checkpoints = [
         {
             "weights_path": os.path.join(ckpt_dir, f"ckpt_{e}.pt"),

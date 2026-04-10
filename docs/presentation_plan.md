@@ -64,7 +64,7 @@
 
 Your mentor just explained TracIn. Recall the formula:
 
-$$\text{TracIn}(z_i, z') = \sum_{t=1}^{T} \eta_t \, \langle \nabla_\theta \ell(z'; \theta_t),\; \nabla_\theta \ell(z_i; \theta_t) \rangle$$
+$$\operatorname{TracIn}(z_i, z') = \sum_{t=1}^{T} \eta_t \, \langle \nabla_\theta \ell(z'; \theta_t),\; \nabla_\theta \ell(z_i; \theta_t) \rangle$$
 
 This measures how much training sample zᵢ influenced the model's prediction on query z'.
 
@@ -86,7 +86,7 @@ where:
 
 The "ghost vector" is just the flattened outer product:
 
-$$g = \text{vec}(e \otimes a) \in \mathbb{R}^{H \times C}$$
+$$g = \operatorname{vec}(e \otimes a) \in \mathbb{R}^{H \times C}$$
 
 **Where do a and e come from?** We hook the layer:
 - **Forward hook** captures the input activation `a`
@@ -112,7 +112,7 @@ $$\langle g^{(1)}, g^{(2)} \rangle = \langle a^{(1)}, a^{(2)} \rangle \cdot \lan
 
 With a batch of N training samples and a query:
 
-$$\text{scores} = (A_q \cdot A_{\text{train}}^\top) \odot (E_q \cdot E_{\text{train}}^\top)$$
+$$\operatorname{scores} = (A_q \cdot A_{\mathrm{train}}^\top) \odot (E_q \cdot E_{\mathrm{train}}^\top)$$
 
 - Aₜᵣₐᵢₙ is (N, H) — all training activations stacked
 - Eₜᵣₐᵢₙ is (N, C) — all training error signals stacked
@@ -126,7 +126,7 @@ For a layer with bias b, the bias gradient is just: ∇b = e (the error signal i
 
 **Trick**: Append a column of 1s to the activation:
 
-$$a_{\text{aug}} = [a;\, 1] \in \mathbb{R}^{H+1}$$
+$$a_{\mathrm{aug}} = [a;\, 1] \in \mathbb{R}^{H+1}$$
 
 Now the outer product e ⊗ a_aug naturally includes both weight and bias gradients:
 - First H×C elements = weight gradient (same as before)
@@ -140,7 +140,7 @@ Ghost dimension becomes (H+1)×C. The factorization still works perfectly.
 
 The full model gradient is a concatenation of per-layer gradients. So:
 
-$$\langle g_{\text{full}}^{(1)}, g_{\text{full}}^{(2)} \rangle = \sum_{\ell=1}^{L} \langle g_\ell^{(1)}, g_\ell^{(2)} \rangle$$
+$$\langle g_{\mathrm{full}}^{(1)}, g_{\mathrm{full}}^{(2)} \rangle = \sum_{\ell=1}^{L} \langle g_\ell^{(1)}, g_\ell^{(2)} \rangle$$
 
 Each layer's contribution is computed independently using its own (a, e) pair, then summed. Layers we don't hook are simply ignored (partial coverage — more on this in Part 3).
 
@@ -254,7 +254,7 @@ Tensor-level hooks (`output.register_hook()`) do NOT create the `BackwardHookFun
 
 **The problem**: When using Adam optimizer, TracIn should weight each gradient by the inverse square root of Adam's second moment:
 
-$$g_{\text{corrected}} = g \odot \frac{1}{\sqrt{v_t} + \epsilon}$$
+$$g_{\mathrm{corrected}} = g \odot \frac{1}{\sqrt{v_t} + \epsilon}$$
 
 where vₜ is Adam's exponential moving average of squared gradients (per-parameter).
 

@@ -29,7 +29,7 @@ Generative models train on large corpora that include copyrighted material. Ther
 
 ## Our solution
 
-**TracIn Ghost** approximates multi-checkpoint TracIn by building **compact ghost vectors** from hooked layers so inner products match true per-layer gradient structure where possible, then **projects** (SJLT) and **indexes** (FAISS) for scalable retrieval. **Key insight:** for `nn.Linear` with 2D activations, full weight-gradient inner products factor into cheap dot products in \(A\) and \(E\). **Pipeline:** (1) **Offline** — for each training sample and checkpoint, extract ghosts, optional Adam correction, project, accumulate \(\sum_t \eta_t g\), build FAISS `IndexFlatIP`. (2) **Online** — ghost for the query, search index, normalize scores to attribution weights.
+**TracIn Ghost** approximates multi-checkpoint TracIn by building **compact ghost vectors** from hooked layers so inner products match true per-layer gradient structure where possible, then **projects** (SJLT) and **indexes** (FAISS) for scalable retrieval. **Key insight:** for `nn.Linear` with 2D activations, full weight-gradient inner products factor into cheap dot products in $A$ and $E$. **Pipeline:** (1) **Offline** — for each training sample and checkpoint, extract ghosts, optional Adam correction, project, accumulate $\sum_t \eta_t g$, build FAISS `IndexFlatIP`. (2) **Online** — ghost for the query, search index, normalize scores to attribution weights.
 
 Details: Adam scaling, 3D/conv sums-of-outer-products, hybrid 2D-vs-raw paths, and memory caps are in [docs/theory.md](docs/theory.md).
 
@@ -39,21 +39,21 @@ Details: Adam scaling, 3D/conv sums-of-outer-products, hybrid 2D-vs-raw paths, a
 
 ### TracIn (scalar score)
 
-\[
+$$
 \mathrm{TracIn}(z_i, z') = \sum_{t} \eta_t \left\langle \nabla \ell(z'; \theta_t), \nabla \ell(z_i; \theta_t) \right\rangle.
-\]
+$$
 
 ### Ghost dot (single `nn.Linear`, 2D activations)
 
-With \(g = \mathrm{vec}(E^\top A)\), \(\langle g_1, g_2 \rangle = \langle A_1, A_2 \rangle \cdot \langle E_1, E_2 \rangle\) (exact for that layer’s ghost).
+With $g = \mathrm{vec}(E^\top A)$, $\langle g_1, g_2 \rangle = \langle A_1, A_2 \rangle \cdot \langle E_1, E_2 \rangle$ (exact for that layer’s ghost).
 
 ### Multi-layer
 
-Concatenate per-layer ghosts; dot products **sum** across hooked layers. Coverage \(< 100\%\) means the ghost lives in a **subspace** of full \(\nabla_\theta \ell\) — see benchmarks vs full-gradient baseline.
+Concatenate per-layer ghosts; dot products **sum** across hooked layers. Coverage $< 100\%$ means the ghost lives in a **subspace** of full $\nabla_\theta \ell$ — see benchmarks vs full-gradient baseline.
 
 ### Adam, SJLT, FAISS (one line each)
 
-- **Adam:** Elementwise \(g / (\sqrt{v_t}+\epsilon)\) on the flattened ghost; \(v_t\) does not factorize over \(A,E\). See `apply_adam_correction` in `math_utils.py`.
+- **Adam:** Elementwise $g / (\sqrt{v_t}+\epsilon)$ on the flattened ghost; $v_t$ does not factorize over $A,E$. See `apply_adam_correction` in `math_utils.py`.
 - **SJLT:** Sparse JL projection preserves inner products approximately; CSR storage. See `build_sjlt_matrix`.
 - **FAISS:** Inner product (`IndexFlatIP`), not cosine — magnitude matters for TracIn.
 
@@ -80,7 +80,7 @@ Online (per query):
 |------|------|
 | `src/hooks_manager.py` | `HookManager`, `MultiLayerBackwardGhostManager` (raw conv/seq blocks, LayerNorm/BN) |
 | `src/math_utils.py` | Ghost formation, Adam, SJLT, projection |
-| `src/error_functions.py` | Classification / regression \(E\) |
+| `src/error_functions.py` | Classification / regression $E$ |
 | `src/indexer.py`, `inference.py`, `faiss_store.py` | Index build, query, FAISS I/O |
 | `benchmarks/ghost_faiss.py` | `compute_ghost_tracin_scores`, `auto_ghost_layers`, hybrid factored path, `max_spatial_positions` |
 | `benchmarks/full_gradient_tracin.py` | Full-parameter reference TracIn |
@@ -91,7 +91,7 @@ Design notes that were previously in "Key design decisions" (layer selection, co
 
 ## Benchmark suite
 
-**Compared methods:** **Ghost+FAISS** (production-style path) vs **full-gradient multi-checkpoint TracIn** (reference). **Primary metric:** Spearman \(\rho\) between the two ranking vectors over training points. **Also logged:** wall time, peak memory, ghost coverage, top-\(k\) overlap.
+**Compared methods:** **Ghost+FAISS** (production-style path) vs **full-gradient multi-checkpoint TracIn** (reference). **Primary metric:** Spearman $\rho$ between the two ranking vectors over training points. **Also logged:** wall time, peak memory, ghost coverage, top-$k$ overlap.
 
 **17 models** (tiers match `benchmarks/summarize_all.py`; on disk under `testModels/small/`, `testModels/medium/`, `testModels/large/`):  
 *Small:* `synth_regression`, `linear_logistic`, `mnist`, `mnist_autoencoder`, `multi_task`  

@@ -96,11 +96,15 @@ _exec_in_container() {
 			"$@"
 }
 
+# Default data root: prefer the shared benchmark-data cache (pre-downloaded datasets)
+# over $RESULT_DIR/data (empty, compute nodes have no internet).
+_DEFAULT_DATA_ROOT="${SCRATCH}/tracin_benchmark_data"
+
 if [[ "${1:-}" == "train" ]]; then
 	shift
 	TRAIN_MODEL="${1:?Usage: $0 train <mnist|cifar10_cnn|synth_regression> [train.py args...]}"
 	shift
-	TRAIN_DATA_ROOT="${TRAIN_DATA_ROOT:-$RESULT_DIR/data}"
+	TRAIN_DATA_ROOT="${TRAIN_DATA_ROOT:-$_DEFAULT_DATA_ROOT}"
 	TRAIN_OUTPUT_DIR="${TRAIN_OUTPUT_DIR:-$RESULT_DIR/outputs/checkpoints}"
 	mkdir -p "$TRAIN_DATA_ROOT" "$TRAIN_OUTPUT_DIR"
 
@@ -155,7 +159,7 @@ if [[ "${1:-}" == "benchmark" ]]; then
 		echo "benchmark mode must be smoke or full, got: $BENCH_MODE" >&2
 		exit 1
 	fi
-	TRAIN_DATA_ROOT="${TRAIN_DATA_ROOT:-$RESULT_DIR/data}"
+	TRAIN_DATA_ROOT="${TRAIN_DATA_ROOT:-$_DEFAULT_DATA_ROOT}"
 	BENCH_OUT="${BENCHMARK_OUTPUT_DIR:-$RESULT_DIR/outputs/benchmarks}"
 	mkdir -p "$BENCH_OUT" "$TRAIN_DATA_ROOT"
 

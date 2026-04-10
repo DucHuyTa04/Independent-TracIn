@@ -84,31 +84,31 @@ def _argv_for_benchmark(
             argv.extend(["--per-class", "20", "--epochs", "10"])
     elif scale == "full":
         if name == "synth_regression":
-            argv.extend(["--n-train", "50000", "--epochs", "40"])
+            argv.extend(["--n-train", "50000", "--epochs", "10000"])
         elif name == "mnist_autoencoder":
-            argv.extend(["--n-train", "60000", "--epochs", "50"])
+            argv.extend(["--n-train", "60000", "--epochs", "10000"])
         elif name == "transformer_lm":
-            argv.extend(["--n-train", "50000", "--epochs", "30"])
+            argv.extend(["--n-train", "50000", "--epochs", "10000"])
         elif name == "vae_fashion":
-            argv.extend(["--n-train", "60000", "--epochs", "50"])
+            argv.extend(["--n-train", "60000", "--epochs", "10000"])
         elif name == "encoder_transformer":
-            argv.extend(["--n-train", "50000", "--epochs", "30"])
+            argv.extend(["--n-train", "50000", "--epochs", "10000"])
         elif name == "gru_lm":
-            argv.extend(["--n-train", "50000", "--epochs", "30"])
+            argv.extend(["--n-train", "50000", "--epochs", "10000"])
         elif name == "unet_tiny":
-            argv.extend(["--n-train", "50000", "--epochs", "30"])
+            argv.extend(["--n-train", "50000", "--epochs", "10000"])
         elif name == "transformer_lm_large":
-            argv.extend(["--n-train", "20000", "--epochs", "15"])
+            argv.extend(["--n-train", "20000", "--epochs", "10000"])
         elif name == "resnet_cifar100":
-            argv.extend(["--per-class", "500", "--epochs", "30"])
+            argv.extend(["--per-class", "500", "--epochs", "10000"])
         elif name == "resnet50_cifar100":
-            argv.extend(["--per-class", "200", "--epochs", "15"])
+            argv.extend(["--per-class", "200", "--epochs", "10000"])
         elif name == "vit_large_cifar10":
-            argv.extend(["--per-class", "500", "--epochs", "15"])
+            argv.extend(["--per-class", "500", "--epochs", "10000"])
         elif name in ("cifar10_cnn", "vit_cifar10", "mlp_mixer_cifar10"):
-            argv.extend(["--per-class", "5000", "--epochs", "30"])
+            argv.extend(["--per-class", "5000", "--epochs", "10000"])
         else:
-            argv.extend(["--per-class", "6000", "--epochs", "30"])
+            argv.extend(["--per-class", "6000", "--epochs", "10000"])
     # scale == "default": run_benchmark.py defaults only
 
     if data_root and name in needs_data_root:
