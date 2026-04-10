@@ -3,9 +3,9 @@
 CLI entry point that dispatches to model-specific scripts in testModels/<name>/.
 
 Usage:
-    python main.py --config testModels/mnist/config.yaml --mode index
-    python main.py --config testModels/mnist/config.yaml --mode query --input outputs/query_input.pt
-    python main.py --config testModels/mnist/config.yaml --mode full --input outputs/query_input.pt
+    python main.py --config testModels/small/mnist/config.yaml --mode index
+    python main.py --config testModels/small/mnist/config.yaml --mode query --input outputs/query_input.pt
+    python main.py --config testModels/small/mnist/config.yaml --mode full --input outputs/query_input.pt
 """
 
 import argparse
@@ -42,8 +42,8 @@ def main() -> None:
     parser.add_argument("--mode", choices=["index", "query", "full"], required=True)
     parser.add_argument("--input", help="Query tensor .pt path (required for query/full)")
     parser.add_argument(
-        "--model", default="mnist",
-        help="Model name matching testModels/<name>/ folder (default: mnist)",
+        "--model", default="small.mnist",
+        help="Python subpackage under testModels (default: small.mnist)",
     )
     args = parser.parse_args()
 

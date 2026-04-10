@@ -16,6 +16,11 @@ You are the src/ library maintainer. Your job is to edit src/ code while strictl
 3. Dim standardization: _flatten_to_2d for all tensor inputs
 4. Type hints + Google docstrings on all public functions
 
+## Math / layout (mandatory)
+- **Adam `exp_avg_sq` vs ghost layout:** PyTorch `nn.Linear.weight` is `(out_features, in_features)` = `(C, H)`. Ghost vectors from `form_ghost_vectors` are `(H, C)` row-major. When loading Adam second moments, transpose `(C, H) → (H, C)` before flattening (see `load_adam_second_moment` + `weight_shape`). Callers pass `weight_shape` from `target_layer.weight.shape` (see `indexer` / `inference` helpers).
+- **SJLT:** Never allocate a full dense `(dim_out, dim_in)` matrix for large `dim_in` when building Achlioptas projection—use row-by-row sparse construction in `build_sjlt_matrix`.
+- **TracIn query side:** The index accumulates training ghosts over checkpoints; online query uses one ghost from the **last** checkpoint only (TracIn-last hybrid). Document this when changing inference semantics.
+
 ## Approach
 1. Read the file(s) to understand current state
 2. Make minimal, focused changes

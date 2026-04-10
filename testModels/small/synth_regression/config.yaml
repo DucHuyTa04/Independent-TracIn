@@ -1,0 +1,30 @@
+loss_type: regression
+seed: 42
+device: auto
+
+paths:
+  outputs_dir: outputs/synth_regression
+  data_root: data
+
+dataset:
+  n_train: 200
+  n_test: 50
+  batch_size: 32
+
+model:
+  in_dim: 5
+  hidden_dim: 32
+
+ghost:
+  projection_dim: null
+  projection_type: sjlt
+  projection_seed: 42
+
+index:
+  output_path: faiss_index_synth
+  metadata_path: faiss_metadata_synth.json
+
+query:
+  index_path: faiss_index_synth
+  metadata_path: faiss_metadata_synth.json
+  top_k: 50

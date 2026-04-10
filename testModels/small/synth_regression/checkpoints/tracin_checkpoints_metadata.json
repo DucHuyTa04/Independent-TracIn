@@ -1,0 +1,20 @@
+[
+  {
+    "epoch": 0,
+    "filename": "ckpt_0.pt",
+    "learning_rate": 0.01,
+    "epoch_loss": 3.6544886997767856
+  },
+  {
+    "epoch": 1,
+    "filename": "ckpt_1.pt",
+    "learning_rate": 0.01,
+    "epoch_loss": 1.958124807902745
+  },
+  {
+    "epoch": 2,
+    "filename": "ckpt_2.pt",
+    "learning_rate": 0.01,
+    "epoch_loss": 0.8474659387554441
+  }
+]

@@ -59,14 +59,14 @@ class TestMockPipeline:
             E_train = self._error_fn(logits, train_targets).detach().cpu().numpy()
 
         g_train = form_ghost_vectors(A_train, E_train)
-        assert g_train.shape == (n_train, 8)  # 4 * 2
+        assert g_train.shape == (n_train, 10)  # (4+1) * 2 with bias augmentation
 
         # Fake Adam v (uniform for simplicity)
-        v = np.ones(8, dtype=np.float32)
+        v = np.ones(10, dtype=np.float32)
         g_train = apply_adam_correction(g_train, v)
 
         # Project
-        P = build_sjlt_matrix(8, proj_dim, seed=42)
+        P = build_sjlt_matrix(10, proj_dim, seed=42)
         g_train_proj = project(g_train, P)
         assert g_train_proj.shape == (n_train, proj_dim)
 
@@ -183,8 +183,9 @@ class TestMockPipeline:
         scores_full = (g_q @ g_train.T)[0]
         top1_full = int(np.argmax(scores_full))
 
-        # Projected scores (dim 6 from 8 -- mild compression)
-        P = build_sjlt_matrix(8, 6, seed=42)
+        # Projected scores (dim 6 from 10 -- mild compression)
+        ghost_dim = int(g_train.shape[1])
+        P = build_sjlt_matrix(ghost_dim, 6, seed=42)
         scores_proj = (project(g_q, P) @ project(g_train, P).T)[0]
         top1_proj = int(np.argmax(scores_proj))
 

@@ -1,0 +1,39 @@
+# MNIST — minimal TracIn pipeline config (checkpoints live in ./checkpoints next to this file)
+loss_type: classification
+device: auto
+
+paths:
+  data_root: data
+  outputs_dir: outputs
+
+dataset:
+  batch_size: 64
+
+# Model hyperparameters (used only by train.py / run scripts to construct the module)
+model:
+  input_dim: 784
+  hidden_dim: 128
+  num_classes: 10
+
+ghost:
+  projection_dim: 1280
+  projection_type: sjlt
+  projection_seed: 42
+
+# Optional: hook a specific layer instead of last nn.Linear
+# target_layer: fc2
+
+index:
+  output_path: faiss_index
+  metadata_path: faiss_metadata.json
+
+query:
+  index_path: faiss_index
+  metadata_path: faiss_metadata.json
+  top_k: 20
+
+# Legacy: explicit checkpoint list (otherwise auto-scan checkpoints/ + metadata.json)
+# checkpoints:
+#   - weights_path: ...
+#     learning_rate: 0.01
+#     optimizer_state_path: ...

@@ -11,6 +11,8 @@ applyTo: "src/**"
 3. **Dim standardization (Rule 3)**: All tensors entering `form_ghost_vectors` must be 2D `[Batch, Hidden]`. Use `_flatten_to_2d()` for 3D (Transformer) and 4D (CNN) inputs.
 4. **Types (Rule 4)**: Every public function has type hints and a Google-style docstring with Args/Returns.
 
+5. **Tensor ordering (ghost vs weight)**: Ghost vectors use `(H, C)` row-major from `form_ghost_vectors`. PyTorch `nn.Linear.weight` and Adam `exp_avg_sq` use `(C, H)`. Align second moments to ghost layout before `apply_adam_correction` (transpose then flatten); pass `weight_shape` into `load_adam_second_moment` when needed.
+
 ## API Design
 - Functions accept explicit parameters, never config dicts
 - `error_fn` is always user-provided: `(logits, targets) -> E`

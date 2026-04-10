@@ -1,0 +1,26 @@
+loss_type: classification
+device: auto
+
+paths:
+  data_root: data
+  outputs_dir: outputs/cifar10_cnn
+
+dataset:
+  batch_size: 64
+
+model:
+  num_classes: 10
+
+ghost:
+  projection_dim: 1280
+  projection_type: sjlt
+  projection_seed: 42
+
+index:
+  output_path: faiss_index_cifar10
+  metadata_path: faiss_metadata_cifar10.json
+
+query:
+  index_path: faiss_index_cifar10
+  metadata_path: faiss_metadata_cifar10.json
+  top_k: 20

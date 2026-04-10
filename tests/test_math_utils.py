@@ -9,8 +9,12 @@ Validates:
     - Inner product preservation under projection (approximate)
 """
 
+import os
+import tempfile
+
 import numpy as np
 import pytest
+import torch
 from scipy import sparse
 
 from src.math_utils import (
@@ -18,6 +22,7 @@ from src.math_utils import (
     build_dense_projection,
     build_sjlt_matrix,
     form_ghost_vectors,
+    load_adam_second_moment,
     project,
 )
 
@@ -93,6 +98,71 @@ class TestAdamCorrection:
         corrected = apply_adam_correction(g, v)
         assert corrected.shape == (3, 4)
         assert corrected.dtype == np.float32
+
+
+class TestLoadAdamSecondMoment:
+    """exp_avg_sq is (C, H) in PyTorch; ghost vectors use (H, C) row-major."""
+
+    def test_transpose_aligns_with_ghost_positions(self):
+        """Non-square (C, H): ghost slot h*C+c must use v[c, h], not C-order flat."""
+        C, H = 2, 3
+        v_2d = np.zeros((C, H), dtype=np.float32)
+        for c in range(C):
+            for h in range(H):
+                v_2d[c, h] = 100.0 * c + h + 1.0
+
+        fake_state = {"state": {1: {"exp_avg_sq": torch.from_numpy(v_2d)}}}
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
+            path = f.name
+        torch.save(fake_state, path)
+        try:
+            adam_ghost = load_adam_second_moment(path, 1, weight_shape=(C, H))
+            wrong_flat = v_2d.flatten()
+
+            A = np.ones((1, H), dtype=np.float32)
+            E = np.ones((1, C), dtype=np.float32)
+            g = form_ghost_vectors(A, E)
+            eps = 0.0
+            c_ghost = apply_adam_correction(g, adam_ghost, eps)
+            c_wrong = apply_adam_correction(g, wrong_flat, eps)
+            assert not np.allclose(c_ghost, c_wrong)
+
+            # Ghost index 1 = (h=0, c=1) -> W[1,0] -> v[1,0] = 101
+            v_10 = v_2d[1, 0]
+            np.testing.assert_allclose(
+                c_ghost[0, 1], g[0, 1] / np.sqrt(v_10), rtol=1e-5,
+            )
+        finally:
+            os.unlink(path)
+
+    def test_weight_shape_mismatch_raises(self):
+        fake_state = {
+            "state": {0: {"exp_avg_sq": torch.ones(2, 3, dtype=torch.float32)}},
+        }
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
+            path = f.name
+        torch.save(fake_state, path)
+        try:
+            with pytest.raises(ValueError, match="does not match"):
+                load_adam_second_moment(path, 0, weight_shape=(9, 9))
+        finally:
+            os.unlink(path)
+
+    def test_unified_checkpoint_wraps_optimizer_state(self):
+        """Unified ckpt format nests Adam state under optimizer_state_dict."""
+        C, H = 2, 2
+        v_2d = torch.ones((C, H), dtype=torch.float32) * 4.0
+        inner = {"state": {0: {"exp_avg_sq": v_2d}}}
+        unified = {"optimizer_state_dict": inner}
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
+            path = f.name
+        torch.save(unified, path)
+        try:
+            adam_ghost = load_adam_second_moment(path, 0, weight_shape=(C, H))
+            assert adam_ghost.shape == (C * H,)
+            np.testing.assert_allclose(adam_ghost, 4.0, rtol=1e-6)
+        finally:
+            os.unlink(path)
 
 
 # ---- SJLT projection ----

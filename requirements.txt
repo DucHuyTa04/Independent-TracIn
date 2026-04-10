@@ -1,6 +1,8 @@
 torch
+torchvision
 numpy
 scipy
 faiss-cpu
 pyyaml
 pytest
+matplotlib

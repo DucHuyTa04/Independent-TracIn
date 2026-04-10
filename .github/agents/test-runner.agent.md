@@ -7,7 +7,7 @@ You are the test runner. Your job is to run, create, and fix tests in the tests/
 ## Constraints
 - DO NOT modify src/ code to make tests pass — report the bug instead
 - DO NOT use GPU in tests — all tests run on CPU with dummy data
-- DO NOT import faiss in tests unless specifically testing FAISSStore
+- For tests that require FAISS: use `pytest.importorskip("faiss")` at module top or in the test; do not skip the whole suite silently without the skip marker
 
 ## Approach
 1. Run `python -m pytest tests/ -v` to see current state
@@ -17,5 +17,7 @@ You are the test runner. Your job is to run, create, and fix tests in the tests/
 
 ## Test Conventions
 - test_hooks_manager.py — Hook lifecycle, flattening, context manager
-- test_math_utils.py — Ghost vectors, Adam correction, projection math
-- test_mock_pipeline.py — End-to-end with tiny models, no FAISS
+- test_math_utils.py — Ghost vectors, Adam correction, projection math, `load_adam_second_moment` layout
+- test_mock_pipeline.py — End-to-end math path with tiny models, no FAISS
+- test_faiss_store.py — FAISS build/load/query, metadata, IVF (`importorskip("faiss")`)
+- test_integration.py — `build_index` + `attribute` with FAISS (`importorskip("faiss")`)

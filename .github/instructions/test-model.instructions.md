@@ -8,11 +8,12 @@ applyTo: "testModels/**"
 Each model gets its own folder under `testModels/<name>/`:
 - `model.py` — nn.Module definition (no adapter classes)
 - `data.py` — Dataset class + `make_loaders()` factory
-- `train.py` — Training script → saves checkpoint + optimizer state
+- `train.py` — Training script → saves checkpoint + optimizer state **after each epoch** (e.g. `ckpt_{epoch}.pt`, `optim_{epoch}.pt`)
 - `run_index.py` — Calls `src.indexer.build_index()` with model-specific wiring
 - `run_query.py` — Calls `src.inference.attribute()` with model-specific wiring
 - `create_query_input.py` — Picks a test sample and saves as .pt
-- `config.yaml` — Model-specific configuration
+- `run_benchmark.py` *(optional)* — Compare Ghost+FAISS vs Original TracIn; writes under `outputs/benchmarks/<name>/`
+- `config.yaml` — Model-specific configuration (list **all** checkpoints with `learning_rate`; query uses **last** checkpoint for forward / Adam; **`adam_param_key`** = optimizer index of `target_layer.weight`)
 
 ## Wiring Pattern
 - Import model from `testModels.<name>.model`

@@ -1,15 +1,7 @@
-"""Offline indexer: process copyrighted training data into a FAISS index.
+"""Offline indexer: process training data into a FAISS index.
 
-Pipeline per checkpoint (from TracIn):
-    1. Load model weights, set eval mode
-    2. For each batch: Hook → capture A → error_fn → E → ghost → adam correct → project
-    3. Accumulate lr-weighted projected vectors across checkpoints
-    4. Build FAISS IndexFlatIP, save index + metadata
-
-Memory management (Rule 1):
-    - torch.no_grad() globally during extraction
-    - del intermediate tensors after projection
-    - torch.cuda.empty_cache() every batch
+Per checkpoint: load weights → hook → ghost vectors → Adam correct → project →
+accumulate lr-weighted vectors → build FAISS IndexFlatIP.
 """
 
 import logging
@@ -22,18 +14,29 @@ import torch.nn as nn
 from scipy import sparse
 from torch.utils.data import DataLoader
 
+from src.config_utils import smart_load_weights_into_model
 from src.faiss_store import FAISSStore
-from src.hooks_manager import HookManager
+from src.hooks_manager import HookManager, MultiLayerBackwardGhostManager
 from src.math_utils import (
     apply_adam_correction,
     build_dense_projection,
     build_sjlt_matrix,
+    concatenate_adam_second_moments,
     form_ghost_vectors,
-    load_adam_second_moment,
+    form_multi_layer_ghost_vectors,
+    load_adam_second_moment_with_bias,
     project,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _weight_shape_for_adam(layer: nn.Module) -> Optional[tuple[int, int]]:
+    """(out_features, in_features) for a 2D weight tensor, else None."""
+    w = getattr(layer, "weight", None)
+    if w is not None and w.dim() == 2:
+        return (int(w.shape[0]), int(w.shape[1]))
+    return None
 
 
 def _resolve_device(device: str) -> str:
@@ -99,6 +102,33 @@ def _probe_ghost_dim(
     return H * C
 
 
+def _probe_multi_layer_ghost_dim(
+    model: nn.Module,
+    ghost_layers: list[nn.Module],
+    training_loss_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    data_loader: DataLoader,
+    device: str,
+) -> int:
+    """Ghost dimensionality for concatenated multi-layer ghosts (one batch)."""
+    inputs, targets, _ = next(iter(data_loader))
+    inputs = inputs.to(device)
+    targets = targets.to(device)
+    # Use train mode for forward+backward (cuDNN RNN backward requires it).
+    model.train()
+    with MultiLayerBackwardGhostManager(ghost_layers) as hm:
+        model.zero_grad(set_to_none=True)
+        with torch.enable_grad():
+            logits = model(inputs)
+            loss = training_loss_fn(logits, targets)
+            if loss.dim() > 0:
+                loss = loss.sum()
+            loss.backward()
+    model.eval()
+    A_list, E_list = hm.numpy_blocks()
+    g = form_multi_layer_ghost_vectors(A_list, E_list)
+    return int(g.shape[1])
+
+
 def build_index(
     model: nn.Module,
     target_layer: nn.Module,
@@ -106,16 +136,22 @@ def build_index(
     data_loader: DataLoader,
     checkpoints: list[dict],
     sample_metadata: dict[int, str],
-    projection_dim: int = 1280,
+    projection_dim: Optional[int] = 1280,
     projection_type: str = "sjlt",
     projection_seed: int = 42,
     adam_param_key: Union[int, str] = 1,
+    adam_bias_param_key: Optional[Union[int, str]] = None,
     output_dir: str = "outputs",
     index_filename: str = "faiss_index",
     metadata_filename: str = "faiss_metadata.json",
     index_type: str = "flat",
     device: str = "auto",
     load_weights_fn: Optional[Callable[[nn.Module, str, str], None]] = None,
+    multi_layer_ghost: bool = False,
+    ghost_layers: Optional[list[nn.Module]] = None,
+    training_loss_fn: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+    adam_param_keys_multi: Optional[list[Union[int, str]]] = None,
+    adam_bias_param_keys_multi: Optional[list[Optional[Union[int, str]]]] = None,
 ) -> str:
     """Build a FAISS index from training data ghost vectors.
 
@@ -129,6 +165,7 @@ def build_index(
         error_fn: Callable (logits, targets) -> error signal E, shape (batch, C).
                   For classification: softmax(logits) - one_hot(targets).
                   For regression: logits - targets.
+                  Ignored when ``multi_layer_ghost`` is True.
         data_loader: DataLoader yielding (inputs, targets, sample_ids) 3-tuples.
         checkpoints: List of dicts with keys:
                      - "weights_path" (str): path to model weights
@@ -146,6 +183,12 @@ def build_index(
         device: "auto", "cuda", or "cpu".
         load_weights_fn: Optional custom weight loader (model, path, device) -> None.
                          Default: torch.load + load_state_dict.
+        multi_layer_ghost: If True, use backward hooks on ``ghost_layers`` and
+            ``training_loss_fn`` instead of ``error_fn`` / ``target_layer``.
+        ghost_layers: Layers to hook (order = concatenation order), e.g. ``[fc1, fc2]``.
+        training_loss_fn: Same scalar loss as training (e.g. ``CrossEntropyLoss()(logits, y)``).
+        adam_param_keys_multi: Optimizer state keys for each ``ghost_layers`` weight,
+            same order as ``ghost_layers``.
 
     Returns:
         Path to the saved FAISS index file.
@@ -156,8 +199,7 @@ def build_index(
         raise ValueError("checkpoints list is empty")
 
     def _default_load_weights(m: nn.Module, path: str, dev: str) -> None:
-        state = torch.load(path, map_location=dev, weights_only=True)
-        m.load_state_dict(state)
+        smart_load_weights_into_model(m, path, dev)
 
     load_fn = load_weights_fn or _default_load_weights
 
@@ -168,11 +210,28 @@ def build_index(
     n_train = len(all_sample_ids)
     logger.info("Training samples to index: %d", n_train)
 
+    w_shapes_multi: Optional[list[Optional[tuple[int, int]]]] = None
+    if multi_layer_ghost:
+        if ghost_layers is None or training_loss_fn is None or adam_param_keys_multi is None:
+            raise ValueError(
+                "multi_layer_ghost=True requires ghost_layers, training_loss_fn, "
+                "and adam_param_keys_multi",
+            )
+        if len(adam_param_keys_multi) != len(ghost_layers):
+            raise ValueError("len(adam_param_keys_multi) must match len(ghost_layers)")
+        w_shapes_multi = [_weight_shape_for_adam(L) for L in ghost_layers]
+
     # Probe ghost dim from one batch
     model.to(device)
     load_fn(model, checkpoints[0]["weights_path"], device)
     model.eval()
-    ghost_dim = _probe_ghost_dim(model, target_layer, error_fn, data_loader, device)
+    if multi_layer_ghost:
+        assert ghost_layers is not None and training_loss_fn is not None
+        ghost_dim = _probe_multi_layer_ghost_dim(
+            model, ghost_layers, training_loss_fn, data_loader, device,
+        )
+    else:
+        ghost_dim = _probe_ghost_dim(model, target_layer, error_fn, data_loader, device)
 
     # Build projection matrix
     proj_dim, P = _build_projection(
@@ -192,43 +251,92 @@ def build_index(
         load_fn(model, weights_path, device)
         model.eval()
 
-        # Load Adam state if available
-        adam_v = None
-        if opt_path:
-            try:
-                adam_v = load_adam_second_moment(opt_path, adam_param_key)
-            except Exception as e:
-                logger.warning("Could not load Adam state from %s: %s", opt_path, e)
+        if multi_layer_ghost:
+            assert ghost_layers is not None
+            assert w_shapes_multi is not None
+            assert adam_param_keys_multi is not None
+            adam_v_cat: Optional[np.ndarray] = None
+            if opt_path:
+                try:
+                    adam_v_cat = concatenate_adam_second_moments(
+                        opt_path, adam_param_keys_multi, w_shapes_multi,
+                        bias_param_keys=adam_bias_param_keys_multi,
+                    )
+                except Exception as e:
+                    logger.warning("Could not load Adam state from %s: %s", opt_path, e)
 
-        offset = 0
-        for inputs, targets, batch_ids in data_loader:
-            inputs = inputs.to(device)
-            targets = targets.to(device)
+            offset_ml = 0
+            for inputs, targets, batch_ids in data_loader:
+                inputs = inputs.to(device)
+                targets = targets.to(device)
+                batch_n = inputs.shape[0]
+                # Train mode for forward+backward (cuDNN RNN backward requires it).
+                model.train()
+                with MultiLayerBackwardGhostManager(ghost_layers) as hm:
+                    model.zero_grad(set_to_none=True)
+                    with torch.enable_grad():
+                        logits = model(inputs)
+                        loss = training_loss_fn(logits, targets)
+                        reduction = getattr(training_loss_fn, "reduction", "mean")
+                        if loss.dim() > 0:
+                            loss = loss.sum()
+                        elif reduction == "mean" and batch_n > 1:
+                            loss = loss * float(batch_n)
+                        loss.backward()
+                model.eval()
+                A_list, E_list = hm.numpy_blocks()
+                g = form_multi_layer_ghost_vectors(A_list, E_list)
+                if adam_v_cat is not None:
+                    g = apply_adam_correction(g, adam_v_cat)
+                g_proj = g if P is None else project(g, P)
+                batch_size = g_proj.shape[0]
+                accumulated[offset_ml : offset_ml + batch_size] += lr * g_proj
+                offset_ml += batch_size
+                del A_list, E_list, logits, loss, g, g_proj
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+        else:
+            # Load Adam state if available
+            adam_v = None
+            if opt_path:
+                try:
+                    adam_v = load_adam_second_moment_with_bias(
+                        opt_path,
+                        adam_param_key,
+                        adam_bias_param_key,
+                        weight_shape=_weight_shape_for_adam(target_layer),
+                    )
+                except Exception as e:
+                    logger.warning("Could not load Adam state from %s: %s", opt_path, e)
 
-            # Extract A and E via hooks
-            with HookManager(model, target_layer) as hm:
-                with torch.no_grad():
-                    logits = model(inputs)
-                A = hm.activation.cpu().numpy().astype(np.float32)
-                E_tensor = error_fn(logits, targets)
-                E = E_tensor.detach().cpu().numpy().astype(np.float32)
+            offset = 0
+            for inputs, targets, batch_ids in data_loader:
+                inputs = inputs.to(device)
+                targets = targets.to(device)
 
-            # Ghost → Adam correct → project
-            g = form_ghost_vectors(A, E)
+                # Extract A and E via hooks
+                with HookManager(model, target_layer) as hm:
+                    with torch.no_grad():
+                        logits = model(inputs)
+                    A = hm.activation.cpu().numpy().astype(np.float32)
+                    E_tensor = error_fn(logits, targets)
+                    E = E_tensor.detach().cpu().numpy().astype(np.float32)
 
-            if adam_v is not None:
-                g = apply_adam_correction(g, adam_v)
+                # Ghost → Adam correct → project
+                g = form_ghost_vectors(A, E)
 
-            g_proj = g if P is None else project(g, P)
+                if adam_v is not None:
+                    g = apply_adam_correction(g, adam_v)
 
-            batch_size = g_proj.shape[0]
-            accumulated[offset: offset + batch_size] += lr * g_proj
-            offset += batch_size
+                g_proj = g if P is None else project(g, P)
 
-            # Rule 1: free memory
-            del A, E, E_tensor, g, g_proj
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                batch_size = g_proj.shape[0]
+                accumulated[offset: offset + batch_size] += lr * g_proj
+                offset += batch_size
+
+                del A, E, E_tensor, g, g_proj
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         logger.info("Checkpoint %d/%d done (lr=%.6f)", ckpt_idx + 1, len(checkpoints), lr)
 
@@ -254,3 +362,139 @@ def build_index(
 
     logger.info("Index saved to: %s", index_path)
     return index_path
+
+
+def build_multi_checkpoint_index(
+    model: nn.Module,
+    target_layer: nn.Module,
+    error_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
+    data_loader: DataLoader,
+    checkpoints: list[dict],
+    sample_metadata: dict[int, str],
+    projection_dim: Optional[int] = 1280,
+    projection_type: str = "sjlt",
+    projection_seed: int = 42,
+    adam_param_key: Union[int, str] = 1,
+    adam_bias_param_key: Optional[Union[int, str]] = None,
+    output_dir: str = "outputs",
+    index_filename: str = "faiss_index",
+    metadata_filename: str = "faiss_metadata.json",
+    index_type: str = "flat",
+    device: str = "auto",
+    load_weights_fn: Optional[Callable[[nn.Module, str, str], None]] = None,
+) -> list[dict]:
+    """Build one FAISS index per checkpoint (vectors are ``lr_t * P g_{i,t}`` only).
+
+    Query with ``attribute_multi_checkpoint`` to sum inner products across checkpoints,
+    matching true multi-step TracIn (no TracIn-last-on-query).
+
+    Returns:
+        List of dicts with ``weights_path``, ``learning_rate``, ``optimizer_state_path``,
+        ``index_path``, ``metadata_path``, ``ckpt_index``.
+    """
+    device = _resolve_device(device)
+
+    if not checkpoints:
+        raise ValueError("checkpoints list is empty")
+
+    def _default_load_weights(m: nn.Module, path: str, dev: str) -> None:
+        smart_load_weights_into_model(m, path, dev)
+
+    load_fn = load_weights_fn or _default_load_weights
+
+    all_sample_ids: list[int] = []
+    for _, _, batch_ids in data_loader:
+        all_sample_ids.extend(int(x) for x in batch_ids)
+    n_train = len(all_sample_ids)
+    logger.info("Multi-ckpt index: training samples: %d", n_train)
+
+    model.to(device)
+    load_fn(model, checkpoints[0]["weights_path"], device)
+    model.eval()
+    ghost_dim = _probe_ghost_dim(model, target_layer, error_fn, data_loader, device)
+
+    proj_dim, P = _build_projection(
+        ghost_dim, projection_dim, projection_type, projection_seed,
+    )
+    logger.info("Multi-ckpt index: ghost dim=%d, projection dim=%d", ghost_dim, proj_dim)
+
+    os.makedirs(output_dir, exist_ok=True)
+    metadata_extra: dict = {}
+    if sample_metadata:
+        metadata_extra["sample_id_to_rights_holder"] = {
+            str(k): v for k, v in sample_metadata.items()
+        }
+
+    out_specs: list[dict] = []
+
+    for ckpt_idx, ckpt in enumerate(checkpoints):
+        weights_path = ckpt["weights_path"]
+        opt_path = ckpt.get("optimizer_state_path")
+        lr = float(ckpt["learning_rate"])
+
+        load_fn(model, weights_path, device)
+        model.eval()
+
+        adam_v = None
+        if opt_path:
+            try:
+                adam_v = load_adam_second_moment_with_bias(
+                    opt_path,
+                    adam_param_key,
+                    adam_bias_param_key,
+                    weight_shape=_weight_shape_for_adam(target_layer),
+                )
+            except Exception as e:
+                logger.warning("Could not load Adam state from %s: %s", opt_path, e)
+
+        accumulated = np.zeros((n_train, proj_dim), dtype=np.float32)
+        offset = 0
+        for inputs, targets, batch_ids in data_loader:
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+
+            with HookManager(model, target_layer) as hm:
+                with torch.no_grad():
+                    logits = model(inputs)
+                A = hm.activation.cpu().numpy().astype(np.float32)
+                E_tensor = error_fn(logits, targets)
+                E = E_tensor.detach().cpu().numpy().astype(np.float32)
+
+            g = form_ghost_vectors(A, E)
+            if adam_v is not None:
+                g = apply_adam_correction(g, adam_v)
+            g_proj = g if P is None else project(g, P)
+
+            batch_size = g_proj.shape[0]
+            accumulated[offset : offset + batch_size] = lr * g_proj
+            offset += batch_size
+
+            del A, E, E_tensor, g, g_proj
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        subdir = os.path.join(output_dir, f"ckpt_{ckpt_idx}")
+        os.makedirs(subdir, exist_ok=True)
+        index_path = os.path.join(subdir, index_filename)
+        metadata_path = os.path.join(subdir, metadata_filename)
+
+        store = FAISSStore(index_type=index_type)
+        store.build_and_save(
+            accumulated,
+            all_sample_ids,
+            index_path,
+            metadata_path,
+            metadata_extra=metadata_extra if metadata_extra else None,
+        )
+
+        out_specs.append({
+            "ckpt_index": ckpt_idx,
+            "weights_path": weights_path,
+            "learning_rate": lr,
+            "optimizer_state_path": opt_path,
+            "index_path": index_path,
+            "metadata_path": metadata_path,
+        })
+        logger.info("Saved per-checkpoint index %d/%d → %s", ckpt_idx + 1, len(checkpoints), subdir)
+
+    return out_specs
