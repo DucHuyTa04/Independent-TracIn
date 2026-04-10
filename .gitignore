@@ -18,3 +18,5 @@ data/
 logs/
 
 *.pt
+
+docs/presentation_plan.md
