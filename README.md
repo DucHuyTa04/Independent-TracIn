@@ -98,31 +98,29 @@ Design notes that were previously in "Key design decisions" (layer selection, co
 *Medium:* `cifar10_cnn`, `resnet_cifar100`, `transformer_lm`, `vae_fashion`, `vit_cifar10`, `encoder_transformer`, `mlp_mixer_cifar10`, `gru_lm`, `unet_tiny`  
 *Large:* `resnet50_cifar100`, `transformer_lm_large`, `vit_large_cifar10`
 
-### Snapshot: SciNet full-GPU run (job **415555**)
+### Snapshot: SciNet full-GPU run (job **416781**)
 
-Representative numbers from that aggregate run. Empty cells were not transcribed into the job summary; **re-run** `benchmarks/run_all.py --scale full` and `benchmarks/summarize_all.py` for your tree. Times and memory below motivated recent speed/memory work (hybrid factored path, optional `max_spatial_positions` for conv memory caps, `auto_ghost_layers` coverage, batch `del` / `empty_cache`).
+Representative numbers below are from `outputs/benchmarks/summary.json` for job 416781 (Ghost+FAISS vs full-gradient TracIn on the same query batches). Times and memory are useful for model-by-model throughput/footprint comparisons on that run.
 
 | Model | Spearman ρ | Ghost (s) | Full (s) | Ghost peak (MB) | Full peak (MB) |
 |-------|------------|-----------|----------|-----------------|----------------|
-| synth_regression | 0.998 | 101.5 | 12.0 | — | — |
-| linear_logistic | 1.000 | — | — | — | — |
-| mnist | 0.928 | — | — | — | — |
-| mnist_autoencoder | 1.000 | — | — | — | — |
-| multi_task | — | — | — | — | — |
-| cifar10_cnn | 0.829 | — | — | — | — |
-| resnet_cifar100 | 0.350 | — | — | 742 | 75 |
-| transformer_lm | 0.914 | 689 | 186 | — | — |
-| vae_fashion | 0.140* | — | — | — | — |
-| vit_cifar10 | 0.874 | 709 | 108 | — | — |
-| encoder_transformer | — | 682 | 187 | — | — |
-| mlp_mixer_cifar10 | — | — | — | 146 | 68 |
-| gru_lm | — | 218.1 | 53.0 | — | — |
-| unet_tiny | — | — | — | 1341 | 169 |
-| resnet50_cifar100 | — | — | — | 4664 | 1172 |
-| transformer_lm_large | — | — | — | 1986 | 968 |
-| vit_large_cifar10 | — | — | — | — | — |
-
-\*VAE row historically sensitive to layer-selection strategy; confirm with a fresh full run.
+| synth_regression | 1.000 | 7.8 | 10.7 | 65.0 | 65.0 |
+| linear_logistic | 1.000 | 4.5 | 9.5 | 65.8 | 65.4 |
+| mnist | 1.000 | 5.9 | 35.6 | 67.9 | 69.7 |
+| mnist_autoencoder | 1.000 | 8.8 | 41.0 | 67.8 | 67.9 |
+| multi_task | 1.000 | 8.4 | 85.9 | 71.6 | 75.8 |
+| cifar10_cnn | 1.000 | 27.2 | 14.2 | 87.7 | 65.3 |
+| resnet_cifar100 | 0.999 | 57.6 | 124.7 | 475.9 | 74.9 |
+| transformer_lm | 1.000 | 644.0 | 145.7 | 186.2 | 78.3 |
+| vae_fashion | 1.000 | 22.8 | 104.7 | 78.6 | 87.6 |
+| vit_cifar10 | 1.000 | 639.9 | 99.4 | 150.9 | 68.5 |
+| encoder_transformer | 0.997 | 610.8 | 142.4 | 183.5 | 78.0 |
+| mlp_mixer_cifar10 | 1.000 | 46.1 | 83.0 | 141.9 | 67.5 |
+| gru_lm | 1.000 | 202.3 | 50.4 | 155.9 | 78.0 |
+| unet_tiny | 0.729 | 52.1 | 213.4 | 865.9 | 168.9 |
+| resnet50_cifar100 | 1.000 | 159.7 | 2899.5 | 3362.1 | 1165.3 |
+| transformer_lm_large | 1.000 | 713.4 | 838.6 | 1548.1 | 966.6 |
+| vit_large_cifar10 | 1.000 | 339.2 | 1085.7 | 1306.8 | 1075.1 |
 
 **Figures:** Per-model `outputs/benchmarks/<model>/benchmark_dashboard.png`. After `summarize_all.py`: **`comparison_cross_model.png`** — one figure with Spearman ρ, top-k heatmap, throughput, speedup, peak memory, memory ratio, and a summary table (models ordered small → medium → large). See [docs/benchmark_guide.md](docs/benchmark_guide.md).
 
