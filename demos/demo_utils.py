@@ -90,19 +90,18 @@ def train_with_tracin_checkpoints(
     device: str,
     save_every: int = 1,
     patience: int = 15,
-    min_rel_delta: float = 1e-4,
+    min_rel_delta: float = 5e-4,
 ) -> None:
     """Train up to ``epochs`` with early stopping on convergence.
 
-    Stops early when the relative loss improvement stays below
-    ``min_rel_delta`` for ``patience`` consecutive epochs.
+    Stops early when the relative loss improvement over the last
+    ``patience`` epochs drops below ``min_rel_delta``.
     """
     os.makedirs(ckpt_dir, exist_ok=True)
     cb = TracInCheckpointCallback(save_dir=ckpt_dir, save_every=max(1, save_every))
     model.train()
     avg = 0.0
-    best_loss = float("inf")
-    wait = 0
+    loss_history: list[float] = []
     final_epoch = 0
     for epoch in range(epochs):
         total = 0.0
@@ -120,23 +119,25 @@ def train_with_tracin_checkpoints(
         avg = total / max(n, 1)
         cb.on_epoch_end(epoch, model, optimizer, avg)
         final_epoch = epoch
+        loss_history.append(avg)
 
-        # convergence check
-        rel_improvement = (best_loss - avg) / max(abs(best_loss), 1e-8)
-        if avg < best_loss:
-            best_loss = avg
-        if rel_improvement < min_rel_delta:
-            wait += 1
-        else:
-            wait = 0
+        # convergence: compare current loss to loss `patience` epochs ago
+        converged = False
+        if len(loss_history) > patience:
+            past = loss_history[-(patience + 1)]
+            window_rel = (past - avg) / max(abs(past), 1e-8)
+            converged = window_rel < min_rel_delta
 
         status = f"  epoch {epoch + 1}/{epochs}  loss={avg:.4f}"
-        if wait > 0:
-            status += f"  (plateau {wait}/{patience})"
+        if len(loss_history) > patience and not converged:
+            past = loss_history[-(patience + 1)]
+            window_pct = 100.0 * (past - avg) / max(abs(past), 1e-8)
+            status += f"  (window Δ {window_pct:.2f}%)"
         print(status)
 
-        if wait >= patience:
-            print(f"  ✓ Converged after {epoch + 1} epochs (loss plateau for {patience} epochs)")
+        if converged:
+            print(f"  ✓ Converged after {epoch + 1} epochs "
+                  f"(< {min_rel_delta:.1%} improvement over {patience} epochs)")
             break
     else:
         print(f"  ✓ Completed all {epochs} epochs")
