@@ -68,9 +68,9 @@ def main() -> None:
     _, test_loader, _ = make_loaders(batch_size=1, data_root=args.data_root)
 
     sample_meta: dict[int, str] = {}
-    for j, i in enumerate(idx):
+    for i in idx:
         _, y, _ = full_train[i]
-        sample_meta[j] = CIFAR_CLASSES[int(y)]
+        sample_meta[i] = CIFAR_CLASSES[int(y)]
 
     meta_path = os.path.join(ckpt_dir, "tracin_checkpoints_metadata.json")
     need_train = args.force_retrain or not os.path.isfile(meta_path)

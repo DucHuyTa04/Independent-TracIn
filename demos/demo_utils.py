@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from typing import Any, Callable
 
 import torch
@@ -10,6 +11,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
 from src.config_utils import (
+    METADATA_FILENAME,
     TracInCheckpointCallback,
     find_adam_bias_param_key,
     find_adam_param_key,
@@ -59,10 +61,31 @@ def resolve_device(device: str) -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(
-            "CUDA is not available. Demos require a GPU — run on a compute node "
-            "(e.g. via Slurm) or pass --device cpu (not recommended for text generation)."
+            "CUDA is not available. Use --device auto (CPU inference is fine after "
+            "pretraining) or --device cpu. For long training runs, use a GPU node."
         )
     return device
+
+
+def _clean_checkpoint_dir(ckpt_dir: str) -> None:
+    """Remove stale ckpt_*.pt, metadata, and .pruned/ before a fresh training run."""
+    if not os.path.isdir(ckpt_dir):
+        return
+    pruned = os.path.join(ckpt_dir, ".pruned")
+    if os.path.isdir(pruned):
+        shutil.rmtree(pruned, ignore_errors=True)
+    meta = os.path.join(ckpt_dir, METADATA_FILENAME)
+    if os.path.isfile(meta):
+        try:
+            os.remove(meta)
+        except OSError:
+            pass
+    for name in os.listdir(ckpt_dir):
+        if name.startswith("ckpt_") and name.endswith(".pt"):
+            try:
+                os.remove(os.path.join(ckpt_dir, name))
+            except OSError:
+                pass
 
 
 def write_demo_config(ckpt_dir: str, outputs_dir: str, config_path: str) -> None:
@@ -92,13 +115,18 @@ def train_with_tracin_checkpoints(
     patience: int = 15,
     min_rel_delta: float = 5e-4,
 ) -> None:
-    """Train up to ``epochs`` with early stopping on convergence.
+    """Train up to ``epochs`` with cosine LR annealing and early stopping.
 
-    Stops early when the relative loss improvement over the last
+    Uses ``CosineAnnealingLR`` to smoothly decay the learning rate to near-zero,
+    and stops early when the relative loss improvement over the last
     ``patience`` epochs drops below ``min_rel_delta``.
     """
+    _clean_checkpoint_dir(ckpt_dir)
     os.makedirs(ckpt_dir, exist_ok=True)
     cb = TracInCheckpointCallback(save_dir=ckpt_dir, save_every=max(1, save_every))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=epochs, eta_min=1e-5,
+    )
     model.train()
     avg = 0.0
     loss_history: list[float] = []
@@ -117,6 +145,7 @@ def train_with_tracin_checkpoints(
             total += float(loss.detach().cpu())
             n += 1
         avg = total / max(n, 1)
+        scheduler.step()
         cb.on_epoch_end(epoch, model, optimizer, avg)
         final_epoch = epoch
         loss_history.append(avg)
@@ -142,6 +171,7 @@ def train_with_tracin_checkpoints(
     else:
         print(f"  ✓ Completed all {epochs} epochs")
     cb.finalize(model, optimizer, final_epoch, avg)
+    cb.select_best(keep=7)
 
 
 def ensure_faiss_index(
@@ -207,8 +237,16 @@ def run_attribute(
     projection_type: str,
     projection_seed: int,
     device: str,
+    n_train: int | None = None,
 ) -> list[dict[str, Any]]:
-    return attribute(
+    """Run attribution. If ``n_train`` is set, FAISS is queried for all ``n_train``
+    vectors so ``total_positive_score`` (sum of positive inner products) reflects
+    the full indexed training set; ``top_samples`` is still trimmed to ``top_k``.
+    """
+    effective_k = (
+        max(int(n_train), int(top_k)) if n_train is not None else int(top_k)
+    )
+    raw = attribute(
         model=model,
         target_layer=target_layer,
         error_fn=error_fn,
@@ -223,9 +261,16 @@ def run_attribute(
         optimizer_state_path=ckpt_opt,
         adam_param_key=adam_key,
         adam_bias_param_key=adam_bias_key,
-        top_k=top_k,
+        top_k=effective_k,
         device=device,
     )
+    if n_train is not None:
+        for r in raw:
+            tops = list(r.get("top_samples", []))
+            total_positive_score = sum(max(0.0, float(sc)) for _, sc in tops)
+            r["total_positive_score"] = total_positive_score
+            r["top_samples"] = tops[: int(top_k)]
+    return raw
 
 
 def last_ckpt_paths(demo_config_path: str) -> tuple[str, str | None]:
@@ -286,15 +331,17 @@ def autoregressive_generate_chars(
     ctx = prompt_ids.to(device).long()
     for _ in range(max_new_tokens):
         # Truncate to model's max context length to avoid pos_emb OOB
-        ctx_in = ctx[:, -ctx_len:]
+        ctx_in = ctx[:, -ctx_len:].clamp(0, vocab_size - 1)
         logits = model(ctx_in)  # (1, t, V)
-        next_logits = logits[:, -1, :] / max(temperature, 1e-6)
+        next_logits = logits[:, -1, :vocab_size] / max(temperature, 1e-6)
         probs = torch.softmax(next_logits, dim=-1)
+        # Guard against NaN/inf from undertrained models
+        if torch.isnan(probs).any() or torch.isinf(probs).any():
+            probs = torch.ones_like(probs) / probs.shape[-1]
         if temperature <= 0:
             next_id = torch.argmax(probs, dim=-1, keepdim=True)
         else:
             next_id = torch.multinomial(probs, num_samples=1)
+        next_id = next_id.clamp(0, vocab_size - 1)
         ctx = torch.cat([ctx, next_id], dim=1)
-        if int(next_id.item()) >= vocab_size:
-            break
     return ctx.cpu()

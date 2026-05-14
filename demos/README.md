@@ -1,9 +1,10 @@
 # TracIn Ghost — Demos
 
-> **GPU required.** All demos default to `--device cuda`. Training and
-> indexing are too slow on CPU (login nodes will kill the process).
-> Run on a GPU compute node — either interactively (`salloc --gpus-per-node=1`)
-> or via Slurm (see below).
+> **GPU for pretraining only.** Run `pretrain_all.py` on a GPU (`--device cuda`).
+> After checkpoints and FAISS indices exist, `interactive_demo.py` defaults to
+> `--device auto` (CPU is fine: one forward pass + small FAISS search). Charts
+> show top-K influence **and** an **Others** bar = share of all remaining training
+> points (so top-K no longer looks like 100% of the story).
 
 Run from the **Independent-TracIn** repository root.
 
@@ -43,7 +44,7 @@ python demos/image_generation_demo.py --num-images 3 --top-k 10 --save-grid
 Or use the unified interactive demo (requires `pretrain_all.py` first):
 
 ```bash
-python demos/interactive_demo.py
+python demos/interactive_demo.py              # --device auto: uses CPU if no GPU
 ```
 
 ---

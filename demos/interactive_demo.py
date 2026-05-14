@@ -22,7 +22,7 @@ import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Subset
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -42,6 +42,7 @@ from demos.demo_utils import (
 )
 from demos.visual_utils import (
     ask_continue,
+    ask_top_k,
     denormalize_cifar,
     show_attribution_result,
     show_image_selection_grid,
@@ -124,16 +125,11 @@ def run_classification(args) -> None:
     train_loader = DataLoader(train_subset, batch_size=64, shuffle=False, num_workers=0)
 
     sample_meta: dict[int, str] = {}
-    for j, i in enumerate(idx):
+    for i in idx:
         _, y, _ = full_train[i]
-        sample_meta[j] = CIFAR_CLASSES[int(y)]
+        sample_meta[i] = CIFAR_CLASSES[int(y)]
 
-    # Also build a mapping by original index (FAISS stores these)
-    orig_to_label: dict[int, str] = {}
-    for j, i in enumerate(idx):
-        _, y, _ = full_train[i]
-        orig_to_label[i] = CIFAR_CLASSES[int(y)]
-
+    n_subset = len(train_subset)
     test_ds = CifarDataset(train=False, root=args.data_root)
 
     # Model -----------------------------------------------------------------
@@ -163,6 +159,8 @@ def run_classification(args) -> None:
     # Interactive loop ------------------------------------------------------
     n_rounds = 1 if _HEADLESS else 999
     for _round in range(n_rounds):
+        top_k = args.top_k if _HEADLESS else ask_top_k(default=args.top_k)
+
         # Pick 20 random test images
         perm = torch.randperm(len(test_ds))[:20].tolist()
         imgs = [denormalize_cifar(test_ds[i][0]) for i in perm]
@@ -190,8 +188,9 @@ def run_classification(args) -> None:
             meta_name="faiss_metadata_cifar10_demo.json",
             ckpt_weights=wpath, ckpt_opt=opath,
             adam_key=adam_key, adam_bias_key=adam_bias_key,
-            top_k=args.top_k, projection_dim=args.projection_dim,
+            top_k=top_k, projection_dim=args.projection_dim,
             projection_type="sjlt", projection_seed=42, device=device,
+            n_train=n_subset,
         )
 
         def _fetch_train_img(sid: int):
@@ -200,15 +199,18 @@ def run_classification(args) -> None:
             return denormalize_cifar(img_t)
 
         top_vis, top_scores, top_labels = _attribution_to_visuals(
-            results, _fetch_train_img, orig_to_label, args.top_k,
+            results, _fetch_train_img, sample_meta, top_k,
         )
 
         query_vis = denormalize_cifar(x)
         save = os.path.join(base, "attribution_classification.png") if args.save_figures else None
+        total_sc = results[0].get("total_positive_score")
         show_attribution_result(
             query_vis, top_vis, top_scores, top_labels,
             task_title=f"Classification — true: {CIFAR_CLASSES[int(y)]}, pred: {CIFAR_CLASSES[pred]}",
             save_path=save,
+            total_score=float(total_sc) if total_sc is not None else None,
+            n_total_samples=n_subset,
         )
 
         if _HEADLESS or not ask_continue("Classification"):
@@ -284,6 +286,8 @@ def run_text_generation(args) -> None:
     # Interactive loop ------------------------------------------------------
     n_rounds = 1 if _HEADLESS else 999
     for _round in range(n_rounds):
+        top_k = args.top_k if _HEADLESS else ask_top_k(default=args.top_k)
+
         prompt_text = DEFAULT_PROMPTS[0] if _HEADLESS else show_text_prompt_menu(DEFAULT_PROMPTS, allow_custom=True)
         print(f"\n  Prompt: \"{prompt_text}\"")
         print("  Generating text …")
@@ -318,19 +322,23 @@ def run_text_generation(args) -> None:
             meta_name="faiss_metadata_tinygpt_demo.json",
             ckpt_weights=wpath, ckpt_opt=opath,
             adam_key=adam_key, adam_bias_key=adam_bias_key,
-            top_k=args.top_k, projection_dim=args.projection_dim,
+            top_k=top_k, projection_dim=args.projection_dim,
             projection_type="sjlt", projection_seed=43, device=device,
+            n_train=n_train,
         )
 
         top_vis, top_scores, top_labels = _attribution_to_visuals(
-            results, _snippet, sample_meta, args.top_k,
+            results, _snippet, sample_meta, top_k,
         )
 
         save = os.path.join(base, "attribution_text_gen.png") if args.save_figures else None
+        total_sc = results[0].get("total_positive_score")
         show_attribution_result(
             text_out[:200], top_vis, top_scores, top_labels,
             task_title="Text Generation — Training Data Attribution",
             save_path=save,
+            total_score=float(total_sc) if total_sc is not None else None,
+            n_total_samples=n_train,
         )
 
         if _HEADLESS or not ask_continue("Text Generation"):
@@ -366,16 +374,11 @@ def run_image_generation(args) -> None:
     train_loader = DataLoader(train_subset, batch_size=128, shuffle=False, num_workers=0)
 
     sample_meta: dict[int, str] = {}
-    for j, i in enumerate(idx):
+    for i in idx:
         _, lbl = full_train.ds[i]
-        sample_meta[j] = FASHION_LABELS[int(lbl)]
+        sample_meta[i] = FASHION_LABELS[int(lbl)]
 
-    # Also build mapping by original index (FAISS stores these)
-    orig_to_label: dict[int, str] = {}
-    for j, i in enumerate(idx):
-        _, lbl = full_train.ds[i]
-        orig_to_label[i] = FASHION_LABELS[int(lbl)]
-
+    n_subset = len(train_subset)
     # Model -----------------------------------------------------------------
     model = FashionVAE().to(device)
     write_demo_config(os.path.abspath(ckpt_dir), os.path.abspath(base), demo_cfg)
@@ -408,6 +411,8 @@ def run_image_generation(args) -> None:
     # Interactive loop ------------------------------------------------------
     n_rounds = 1 if _HEADLESS else 999
     for _round in range(n_rounds):
+        top_k = args.top_k if _HEADLESS else ask_top_k(default=args.top_k)
+
         # Generate a grid of images from random latents
         n_gen = 12
         gen_rng = torch.Generator(device="cpu")
@@ -446,20 +451,24 @@ def run_image_generation(args) -> None:
             meta_name="faiss_metadata_vae_demo.json",
             ckpt_weights=wpath, ckpt_opt=opath,
             adam_key=adam_key, adam_bias_key=adam_bias_key,
-            top_k=args.top_k, projection_dim=args.projection_dim,
+            top_k=top_k, projection_dim=args.projection_dim,
             projection_type="sjlt", projection_seed=44, device=device,
+            n_train=n_subset,
         )
 
         top_vis, top_scores, top_labels = _attribution_to_visuals(
-            results, _fetch_train_img, orig_to_label, args.top_k,
+            results, _fetch_train_img, sample_meta, top_k,
         )
 
         query_vis = tensor_to_gray(x_vis.squeeze(0))
         save = os.path.join(base, "attribution_image_gen.png") if args.save_figures else None
+        total_sc = results[0].get("total_positive_score")
         show_attribution_result(
             query_vis, top_vis, top_scores, top_labels,
             task_title="Image Generation — Training Data Attribution",
             save_path=save,
+            total_score=float(total_sc) if total_sc is not None else None,
+            n_total_samples=n_subset,
         )
 
         if _HEADLESS or not ask_continue("Image Generation"):
@@ -481,7 +490,10 @@ def main() -> None:
             "  3. Each task shows an interactive selection → attribution → visual result.\n"
         ),
     )
-    p.add_argument("--device", default="cuda", help="cuda | cpu | auto (default: cuda)")
+    p.add_argument(
+        "--device", default="auto",
+        help="cuda | cpu | auto (default: auto — CPU is fine for inference after pretrain)",
+    )
     p.add_argument("--data-root", default="data", help="Root for torchvision datasets")
     p.add_argument("--top-k", type=int, default=5, help="Number of top influential samples")
     p.add_argument("--max-train", type=int, default=8000, help="Max training subset (classification & VAE)")
@@ -500,6 +512,11 @@ def main() -> None:
         args.save_figures = True
         import matplotlib
         matplotlib.use("Agg")
+
+    # Auto-enable save_figures when no GUI display is available
+    from demos.visual_utils import _has_gui_display
+    if not _has_gui_display():
+        args.save_figures = True
 
     args.device = resolve_device(args.device)
     skip = set(s.strip().lower() for s in args.skip_tasks.split(",") if s.strip())

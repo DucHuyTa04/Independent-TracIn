@@ -18,7 +18,7 @@ import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Subset
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
@@ -64,9 +64,9 @@ def pretrain_classification(args) -> None:
     train_loader = DataLoader(train_subset, batch_size=64, shuffle=False, num_workers=0)
 
     sample_meta: dict[int, str] = {}
-    for j, i in enumerate(idx):
+    for i in idx:
         _, y, _ = full_train[i]
-        sample_meta[j] = CIFAR_CLASSES[int(y)]
+        sample_meta[i] = CIFAR_CLASSES[int(y)]
 
     model = CifarSmallCNN(num_classes=10).to(args.device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -78,7 +78,9 @@ def pretrain_classification(args) -> None:
     train_with_tracin_checkpoints(
         model, opt, train_loader, loss_step, ckpt_dir,
         args.cifar_epochs, args.device,
-        save_every=max(1, args.cifar_epochs // 5),
+        save_every=max(1, args.cifar_epochs // 10),
+        patience=50,
+        min_rel_delta=1e-4,
     )
 
     write_demo_config(os.path.abspath(ckpt_dir), os.path.abspath(base), demo_cfg)
@@ -132,7 +134,9 @@ def pretrain_text_generation(args) -> None:
     train_with_tracin_checkpoints(
         model, opt, train_loader, loss_step, ckpt_dir,
         args.gpt_epochs, args.device,
-        save_every=max(1, args.gpt_epochs // 5),
+        save_every=max(1, args.gpt_epochs // 10),
+        patience=50,
+        min_rel_delta=1e-4,
     )
 
     write_demo_config(os.path.abspath(ckpt_dir), os.path.abspath(base), demo_cfg)
@@ -174,9 +178,9 @@ def pretrain_image_generation(args) -> None:
     train_loader = DataLoader(train_subset, batch_size=128, shuffle=False, num_workers=0)
 
     sample_meta: dict[int, str] = {}
-    for j, i in enumerate(idx):
+    for i in idx:
         _, lbl = full_train.ds[i]
-        sample_meta[j] = FASHION_LABELS[int(lbl)]
+        sample_meta[i] = FASHION_LABELS[int(lbl)]
 
     model = FashionVAE().to(args.device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -192,7 +196,9 @@ def pretrain_image_generation(args) -> None:
     train_with_tracin_checkpoints(
         model, opt, train_loader, loss_step, ckpt_dir,
         args.vae_epochs, args.device,
-        save_every=max(1, args.vae_epochs // 5),
+        save_every=max(1, args.vae_epochs // 10),
+        patience=50,
+        min_rel_delta=1e-4,
     )
 
     write_demo_config(os.path.abspath(ckpt_dir), os.path.abspath(base), demo_cfg)

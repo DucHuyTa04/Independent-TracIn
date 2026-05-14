@@ -82,9 +82,9 @@ def main() -> None:
     train_loader = DataLoader(train_subset, batch_size=128, shuffle=False, num_workers=0)
 
     sample_meta: dict[int, str] = {}
-    for j, i in enumerate(idx):
+    for i in idx:
         _, lbl = full_train.ds[i]
-        sample_meta[j] = FASHION_LABELS[int(lbl)]
+        sample_meta[i] = FASHION_LABELS[int(lbl)]
 
     meta_path = os.path.join(ckpt_dir, "tracin_checkpoints_metadata.json")
     need_train = args.force_retrain or not os.path.isfile(meta_path)

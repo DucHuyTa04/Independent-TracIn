@@ -22,6 +22,7 @@ _INFLUENCE_CMAP = LinearSegmentedColormap.from_list(
 _ACCENT = "#4E79A7"
 _BG = "#fafafa"
 _DARK = "#222222"
+_OTHERS_BAR = "#b8b8b8"
 
 
 # ---------------------------------------------------------------------------
@@ -49,13 +50,118 @@ def tensor_to_gray(t: torch.Tensor) -> np.ndarray:
 # Interactive image selection grid
 # ---------------------------------------------------------------------------
 
+def _has_gui_display() -> bool:
+    """Return True if a GUI display is available for matplotlib."""
+    import os
+    backend = matplotlib.get_backend().lower()
+    if backend == "agg":
+        return False
+    # On Linux, most GUI backends need DISPLAY or WAYLAND_DISPLAY
+    if os.name == "posix":
+        if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+            return True
+        return False
+    return True
+
+
+def _open_image_with_system_viewer(path: str) -> bool:
+    """Best-effort open image file with the OS default image viewer."""
+    import os
+    import shutil
+    import subprocess
+
+    opener = None
+    for candidate in ("xdg-open", "gio"):
+        if shutil.which(candidate):
+            opener = candidate
+            break
+    if opener is None:
+        return False
+
+    try:
+        if opener == "gio":
+            subprocess.Popen(["gio", "open", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen([opener, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
+def _terminal_image_selection(
+    images: list[np.ndarray],
+    labels: list[str],
+    title: str,
+    n_cols: int = 5,
+) -> int | None:
+    """Fallback: save grid as PNG, then let user pick by number in the terminal."""
+    import os
+
+    # Save the grid so the user can view the images before choosing
+    n = len(images)
+    n_rows = (n + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(2.4 * n_cols, 2.8 * n_rows),
+        facecolor=_BG,
+    )
+    axes = np.atleast_2d(axes)
+    fig.suptitle(title, fontsize=14, fontweight="bold", color=_DARK, y=0.98)
+    for i in range(n_rows * n_cols):
+        r, c = divmod(i, n_cols)
+        ax = axes[r, c]
+        ax.set_facecolor(_BG)
+        if i < n:
+            cmap = "gray" if images[i].ndim == 2 else None
+            ax.imshow(images[i], cmap=cmap, vmin=0, vmax=1)
+            ax.set_title(f"[{i}] {labels[i]}", fontsize=9, pad=3)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    outputs_dir = os.path.join(os.path.dirname(__file__), "outputs")
+    os.makedirs(outputs_dir, exist_ok=True)
+    grid_path = os.path.join(outputs_dir, "tracin_selection_grid.png")
+    fig.savefig(grid_path, dpi=150, bbox_inches="tight", facecolor=_BG)
+    plt.close(fig)
+    print(f"\n  {title}")
+    print(f"  Selection grid saved → {grid_path}")
+    if _open_image_with_system_viewer(grid_path):
+        print("  Opened selection grid in the default image viewer.")
+    else:
+        print("  Could not auto-open viewer; open the saved image manually.")
+    print("  (Open the image to preview candidates)\n")
+
+    for i, lbl in enumerate(labels):
+        print(f"    [{i}] {lbl}")
+    print(f"\n    [q] Skip this task")
+    while True:
+        raw = input("\n  Enter number: ").strip().lower()
+        if raw == "q":
+            return None
+        if raw.isdigit():
+            idx = int(raw)
+            if 0 <= idx < len(labels):
+                return idx
+        print(f"  Please enter 0–{len(labels) - 1} or 'q' to skip.")
+
+
 def show_image_selection_grid(
     images: list[np.ndarray],
     labels: list[str],
     title: str = "Click an image to select it",
     n_cols: int = 5,
 ) -> int | None:
-    """Display a grid of images.  User clicks one.  Returns selected index or None."""
+    """Display a grid of images.  User clicks one.  Returns selected index or None.
+
+    Falls back to terminal-based numbered selection when no GUI display is
+    available (e.g. SSH without X forwarding).
+    """
+    if not _has_gui_display():
+        return _terminal_image_selection(images, labels, title, n_cols)
+
     n = len(images)
     n_rows = (n + n_cols - 1) // n_cols
 
@@ -143,18 +249,43 @@ def show_attribution_result(
     top_k_labels: list[str],
     task_title: str,
     save_path: str | None = None,
+    total_score: float | None = None,
+    n_total_samples: int | None = None,
 ) -> None:
     """Show query on the left, top-K influential training samples on the right
     with influence-percentage bars.  Works for images (ndarray) or text (str).
 
-    ``top_k_scores`` are raw scores — they will be normalised to percentages internally.
+    When ``total_score`` is set (sum of max(0, score) over **all** indexed training
+    points), each top-K panel and the bar use **true** share of total influence, and
+    an ``Others`` segment shows the remainder (all non-top-K training points).
+
+    When ``total_score`` is None, percentages are normalised over top-K only
+    (backward compatible).
     """
     k = len(top_k_visuals)
-    is_image = isinstance(query_visual, np.ndarray)
 
-    # Normalise scores to percentages
-    total = sum(abs(s) for s in top_k_scores)
-    pcts = [abs(s) / total * 100 if total > 0 else 0.0 for s in top_k_scores]
+    # Positive-part scores (matches inference.attribute clamping)
+    pos_scores = [max(0.0, float(s)) for s in top_k_scores]
+
+    if total_score is not None and total_score > 0:
+        pcts = [100.0 * ps / total_score for ps in pos_scores]
+        top_k_sum = sum(pcts)
+        others_pct = max(0.0, 100.0 - top_k_sum)
+        n_others = None
+        if n_total_samples is not None and n_total_samples > k:
+            n_others = n_total_samples - k
+        others_label = (
+            f"Others ({n_others} samples)" if n_others is not None else "Others (rest of train set)"
+        )
+        print(
+            f"  Influence vs full train set: top-{k} = {top_k_sum:.5f}% combined; "
+            f"{others_label} = {others_pct:.5f}%."
+        )
+    else:
+        total = sum(abs(s) for s in top_k_scores)
+        pcts = [abs(s) / total * 100 if total > 0 else 0.0 for s in top_k_scores]
+        others_pct = 0.0
+        others_label = "Others"
 
     # ── layout ──────────────────────────────────────────────────────────
     # 1 column for query  |  k columns for top-K  |  below: stacked bar
@@ -192,12 +323,12 @@ def show_attribution_result(
         ax = fig.add_subplot(top_gs[r, 1 + c])
         pct = pcts[i]
         colour = _INFLUENCE_CMAP(pct / 100.0)
-        label = f"#{i + 1}  {top_k_labels[i]}\n{pct:.1f}%"
+        label = f"#{i + 1}  {top_k_labels[i]}\n{pct:.5f}%"
         _draw_sample(ax, top_k_visuals[i], label, accent=colour, fontsize=8)
 
     # ── bottom row: influence bar ───────────────────────────────────────
     ax_bar = fig.add_subplot(outer[1])
-    _draw_influence_bar(ax_bar, pcts, top_k_labels)
+    _draw_influence_bar(ax_bar, pcts, top_k_labels, others_pct, others_label)
 
     fig.suptitle(
         task_title,
@@ -209,9 +340,11 @@ def show_attribution_result(
     if save_path:
         fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor="white")
         print(f"  Saved → {save_path}")
-    if matplotlib.get_backend().lower() != "agg":
+    if _has_gui_display() and matplotlib.get_backend().lower() != "agg":
         plt.show(block=True)
     else:
+        if save_path:
+            _open_image_with_system_viewer(save_path)
         plt.close(fig)
 
 
@@ -256,8 +389,13 @@ def _draw_influence_bar(
     ax: plt.Axes,
     pcts: list[float],
     labels: list[str],
+    others_pct: float = 0.0,
+    others_label: str = "Others",
 ) -> None:
-    """Horizontal stacked bar showing influence distribution."""
+    """Horizontal stacked bar showing influence distribution.
+
+    If ``others_pct`` > 0, appends a grey segment for the rest of the training set.
+    """
     ax.set_facecolor("white")
     left = 0.0
     for i, (p, lab) in enumerate(zip(pcts, labels)):
@@ -265,10 +403,26 @@ def _draw_influence_bar(
         ax.barh(0, p, left=left, height=0.6, color=colour, edgecolor="white", linewidth=0.5)
         if p > 4:
             ax.text(
-                left + p / 2, 0, f"{p:.0f}%",
+                left + p / 2, 0, f"{p:.5f}%",
                 ha="center", va="center", fontsize=7, fontweight="bold", color="white",
             )
         left += p
+    if others_pct > 0.01:
+        ax.barh(
+            0, others_pct, left=left, height=0.6,
+            color=_OTHERS_BAR, edgecolor="white", linewidth=0.5,
+        )
+        if others_pct > 6:
+            ax.text(
+                left + others_pct / 2, 0, f"{others_pct:.5f}%",
+                ha="center", va="center", fontsize=7, fontweight="bold", color="white",
+            )
+        elif others_pct > 2:
+            ax.text(
+                left + others_pct / 2, 0, f"{others_pct:.5f}%",
+                ha="center", va="center", fontsize=6, fontweight="bold", color="#333333",
+            )
+        left += others_pct
     ax.set_xlim(0, 100)
     ax.set_ylim(-0.5, 0.5)
     ax.set_yticks([])
@@ -282,6 +436,17 @@ def _draw_influence_bar(
 # ---------------------------------------------------------------------------
 # Continue / quit prompt
 # ---------------------------------------------------------------------------
+
+def ask_top_k(default: int = 5) -> int:
+    """Prompt the user for the number of top-K influential samples to show."""
+    while True:
+        raw = input(f"\n  How many top-K influential samples? [{default}]: ").strip()
+        if not raw:
+            return default
+        if raw.isdigit() and int(raw) >= 1:
+            return int(raw)
+        print("  Please enter a positive integer.")
+
 
 def ask_continue(task_name: str) -> bool:
     """Ask user whether to run another query or move on."""

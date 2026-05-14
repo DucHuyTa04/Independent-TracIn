@@ -14,8 +14,9 @@ set -euo pipefail
 # SLURM_SUBMIT_DIR is the cwd when sbatch was invoked (= project root).
 # Fallback to dirname-based resolution for local runs.
 ROOT_DIR="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-PYTHON="/scratch/duchuy/venvs/tracenv/bin/python"
-DATA_ROOT="/scratch/duchuy/tracin_benchmark_data"
+# Override with TRACIN_DEMO_PYTHON / TRACIN_DATA_ROOT if needed.
+PYTHON="${TRACIN_DEMO_PYTHON:-python3}"
+DATA_ROOT="${TRACIN_DATA_ROOT:-data}"
 
 module load StdEnv/2023 || true
 
@@ -34,26 +35,36 @@ echo "Phase 1: Pre-training models..."
 "$PYTHON" demos/pretrain_all.py \
     --device cuda \
     --data-root "$DATA_ROOT" \
-    --cifar-epochs 10 \
-    --gpt-epochs 15 \
-    --vae-epochs 20 \
+    --cifar-epochs 500 \
+    --gpt-epochs 1000 \
+    --vae-epochs 500 \
     --max-train 8000 \
     --n-train 8000 \
     --projection-dim 512
 
 echo ""
 echo "Phase 2: Generating attribution figures (headless)..."
+# Don't let a demo failure kill the whole pipeline
+set +e
 "$PYTHON" demos/interactive_demo.py \
     --headless \
-    --device cuda \
+    --device auto \
     --data-root "$DATA_ROOT" \
     --top-k 5 \
     --max-train 8000 \
     --n-train 8000 \
     --projection-dim 512
+DEMO_RC=$?
+set -e
 
 echo ""
 echo "=========================================="
-echo "  Done!  Figures saved under demos/outputs/"
+if [ "$DEMO_RC" -eq 0 ]; then
+    echo "  Done!  Figures saved under demos/outputs/"
+else
+    echo "  Pre-training complete. Demo exited with code $DEMO_RC."
+    echo "  You can re-run the demo manually:"
+    echo "    python demos/interactive_demo.py --device auto --data-root $DATA_ROOT"
+fi
 echo "=========================================="
 ls -la demos/outputs/*/attribution_*.png 2>/dev/null || echo "  (no figures found)"
